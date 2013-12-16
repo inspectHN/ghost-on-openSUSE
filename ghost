@@ -11,32 +11,17 @@
 
 DESC="Ghost"
 NAME=ghost
-GHOST_ROOT=/var/www/ghost
+GHOST_ROOT=/srv/www/htdocs/ghost
 GHOST_GROUP=ghost
 GHOST_USER=ghost
 DAEMON=/usr/bin/node
 DAEMON_ARGS="$GHOST_ROOT/index.js"
 LOGFILE=/var/log/ghost/ghost.log
-PIDFILE=/var/log/ghost/run/$NAME.pid
 SCRIPTNAME=/etc/init.d/$NAME
 export NODE_ENV=production
 
 # Exit if the package is not installed
 [ -x "$DAEMON" ] || exit 0
-
-# Read configuration variable file if it is present
-[ -r /etc/default/$NAME ] && . /etc/default/$NAME
-
-# Load the VERBOSE setting and other rcS variables
-### This next line was commented out because that file does not exist, this file was written for Ubuntu
-#. /lib/init/vars.sh
-# I like to know what is going on
-VERBOSE=yes
-
-# Define LSB log_* functions.
-# Depend on lsb-base (>= 3.2-14) to ensure that this file is present
-# and status_of_proc is working.
-#. /lib/lsb/init-functions
 
 # Shell functions sourced from /etc/rc.status:
 #      rc_check         check and set local and overall rc status
@@ -81,7 +66,7 @@ case "$1" in
 		
 		## Start daemon with startproc(8). If this fails
 		## the return value is set appropriately by startproc.
-		/sbin/startproc -q -u $GHOST_USER -g $GHOST_GROUP -l $LOGFILE -p $PIDFILE $DAEMON $DAEMON_ARGS
+		/sbin/startproc -q -u $GHOST_USER -g $GHOST_GROUP -l $LOGFILE $DAEMON $DAEMON_ARGS
 		
 		# Remember status and be verbose
 		rc_status -v
@@ -91,11 +76,11 @@ case "$1" in
 		
 		## Stop daemon with killproc(8) and if this fails
 		## killproc sets the return value according to LSB.
-		/sbin/killproc -q -p $PIDFILE -TERM $DAEMON
+		/sbin/killproc -q -TERM $DAEMON
 
 		# Remember status and be verbose
 		rc_status -v
-    ;;
+		;;
 	status)
 		echo -n "Checking for service $NAME "
 		## Check status with checkproc(8), if process is running
@@ -110,14 +95,14 @@ case "$1" in
 		# 5--199 reserved (5--99 LSB, 100--149 distro, 150--199 appl.)
 		
 		# NOTE: checkproc returns LSB compliant status values.
-		/sbin/checkproc -p $PIDFILE $DAEMON
+		/sbin/checkproc $DAEMON
 		
 		# NOTE: rc_status knows that we called this init script with
 		# "status" option and adapts its messages accordingly.
 		rc_status -v
 		;;
 	restart|force-reload)
-    #
+		#
 		# If the "reload" option is implemented then remove the
 		# 'force-reload' alias from here, and include it with
 		# the reload option
@@ -137,4 +122,3 @@ case "$1" in
 		;;
 esac
 rc_exit
-
