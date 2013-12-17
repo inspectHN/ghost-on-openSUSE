@@ -16,29 +16,17 @@ GHOST_GROUP=ghost
 GHOST_USER=ghost
 DAEMON=/usr/bin/node
 DAEMON_ARGS="$GHOST_ROOT/index.js"
-LOGFILE=/var/log/ghost/ghost.log
+LOGFILE=/var/log/ghost/$NAME.log
+PIDFILE=/var/log/ghost/run/$NAME.pid
 SCRIPTNAME=/etc/init.d/$NAME
+STARTUP_WAIT_TIME="5s"
 export NODE_ENV=production
 
 # Exit if the package is not installed
-[ -x "$DAEMON" ] || exit 0
+[ -x "$DAEMON" ] || exit 5
 
-# Shell functions sourced from /etc/rc.status:
-#      rc_check         check and set local and overall rc status
-#      rc_status        check and set local and overall rc status
-#      rc_status -v     be verbose in local rc status and clear it afterwards
-#      rc_status -v -r  ditto and clear both the local and overall rc status
-#      rc_status -s     display "skipped" and exit with status 3
-#      rc_status -u     display "unused" and exit with status 3
-#      rc_failed        set local and overall rc status to failed
-#      rc_failed <num>  set local and overall rc status to <num>
-#      rc_reset         clear both the local and overall rc status
-#      rc_exit          exit appropriate to overall rc status
-#      rc_active        checks whether a service is activated by symlinks
-. /etc/rc.status
-
-# Reset status of this service
-rc_reset
+# Need to cd to $GHOST_ROOT so node with start with appropriate environment values
+cd $GHOST_ROOT
 
 # Return values acc. to LSB for all commands but status:
 # 0	  - success
@@ -58,34 +46,80 @@ rc_reset
 
 case "$1" in
 	start)
-		echo -n "Starting $NAME "
-		
+		echo "`date +[%F_%H-%M-%S]` Starting..." >> $LOGFILE
+		echo -n "Starting $NAME: "
+
 		# Set up folder structure
 		mkdir -p /var/log/ghost/run
 		chown -R ghost:ghost /var/log/ghost
 		
-		## Start daemon with startproc(8). If this fails
-		## the return value is set appropriately by startproc.
-		/sbin/startproc -q -u $GHOST_USER -g $GHOST_GROUP -l $LOGFILE $DAEMON $DAEMON_ARGS
-		
-		# Remember status and be verbose
-		rc_status -v
+		sudo -u $GHOST_USER -g $GHOST_GROUP $DAEMON $DAEMON_ARGS >> $LOGFILE 2>&1 &
+		thePPID=$!
+		sleep $STARTUP_WAIT_TIME
+		if [[ -n `ps -eo pid,ppid,user | grep $thePPID | grep $GHOST_USER` ]]; then
+			thePID=`ps -eo pid,ppid,user | grep $thePPID | grep $GHOST_USER | awk '{print $1;}'`
+			sudo -u $GHOST_USER -g $GHOST_GROUP echo "$thePID" > $PIDFILE
+			if [[ -n `netstat -lntp | grep $thePID` ]]; then
+				echo -n "[ "
+				echo -en "\033[1;32mOK"
+				echo -e "\033[0;39m ]"
+				exit 0
+			else
+				echo "!!!!!netstat output: `netstat -lntp | grep $thePID`"
+				echo -n "[ "
+				echo -en "\033[1;33mFailed"
+				echo -e "\033[0;39m ]"
+				echo "Process appears to have started, but no TCP listener has been created"
+				exit 1
+			fi
+		else
+			echo -n "[ "
+			echo -en "\033[1;31mFailed"
+			echo -e "\033[0;39m ]"
+			exit 7
+		fi
 		;;
 	stop)
-		echo -n "Stopping $NAME "
+		echo -n "Stopping $NAME: "
+		if ! [[ -f $PIDFILE ]]; then
+			echo -n "[ "
+			echo -en "\033[1;33mFailed"
+			echo -en "\033[0;39m ]..."
+			echo "the service was not running" 
+			exit 7
+		fi
 		
-		## Stop daemon with killproc(8) and if this fails
-		## killproc sets the return value according to LSB.
-		/sbin/killproc -q -TERM $DAEMON
-
-		# Remember status and be verbose
-		rc_status -v
+		thePID=`cat $PIDFILE`
+		if ! [[ -n `echo $thePID | egrep '[0-9]+'` ]]; then
+			echo -n "[ "
+			echo -en "\033[1;31mFailed"
+			echo -e "\033[0;39m ]"
+			echo -e "\tDid not receive a value from $PIDFILE"
+			echo -e "\tRemoving stale PID file"
+			rm -f $PIDFILE
+			exit 7
+		fi
+		
+		echo "`date +[%F_%H-%M-%S]` Stopping..." >> $LOGFILE
+		kill $thePID
+		if [[ -n `ps -eo pid | grep $thePID` ]]; then
+			kill -9 $thePID
+			echo -n "[ "
+			echo -en "\033[1;33mOK"
+			echo -e "\033[0;39m ]"
+			echo -e "\tNote: The process needed to be force killed"
+			rm -f $PIDFILE
+			exit 1
+		else
+			echo -n "[ "
+			echo -en "\033[1;32mOK"
+			echo -e "\033[0;39m ]"
+			rm -f $PIDFILE
+			exit 0
+		fi
 		;;
 	status)
-		echo -n "Checking for service $NAME "
-		## Check status with checkproc(8), if process is running
-		## checkproc will return with exit status 0.
-
+		echo -n "$NAME "
 		# Return value is slightly different for the status command:
 		# 0 - service up and running
 		# 1 - service dead, but /var/run/  pid  file exists
@@ -94,12 +128,20 @@ case "$1" in
 		# 4 - service status unknown :-(
 		# 5--199 reserved (5--99 LSB, 100--149 distro, 150--199 appl.)
 		
-		# NOTE: checkproc returns LSB compliant status values.
-		/sbin/checkproc $DAEMON
-		
-		# NOTE: rc_status knows that we called this init script with
-		# "status" option and adapts its messages accordingly.
-		rc_status -v
+		if ! [[ -f $PIDFILE ]]; then
+			echo "is stopped"
+			exit 3
+		fi
+
+		thePID=`cat $PIDFILE`
+		if [[ -n `echo $thePID | egrep '[0-9]+'` ]]; then
+			echo "(pid $thePID) is running..."
+			exit 0
+		else
+			echo "is stopped"
+			echo -e "\tNote: $PIDFILE still exists"
+			exit 1
+		fi
 		;;
 	restart|force-reload)
 		#
@@ -112,13 +154,9 @@ case "$1" in
 		## running or not, start it again.
 		$0 stop
 		$0 start
-
-		# Remember status and be quiet
-		rc_status
 		;;
 	*)
 		echo "Usage: $SCRIPTNAME {start|stop|status|restart|force-reload}" >&2
 		exit 3
 		;;
 esac
-rc_exit
